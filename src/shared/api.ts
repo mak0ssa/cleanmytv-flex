@@ -140,7 +140,10 @@ export interface HomeStatus {
   unsupported?: string
 }
 
-export type HomeLayout = 'shelf' | 'split' | 'rail'
+export type HomeLayout = 'shelf' | 'split' | 'rail' | 'mirror' | 'center' | 'bottom' | 'free'
+
+/** How an icon answers focus on the TV. */
+export type AnimStyle = 'zoom' | 'lift' | 'bounce' | 'none'
 export type HomeSection = 'nowplaying' | 'dock' | 'rows' | 'folders' | 'grid' | 'free'
 export type QuickId = 'settings' | 'wifi' | 'inputs' | 'bluetooth' | 'display' | 'apps' | 'sleep' | 'search' | 'music' | 'drawer' | 'tune'
 
@@ -229,6 +232,12 @@ export interface HomeConfig {
   drawer_dim: number
   /** Language of the TV's own text: Russian, English, or follow the TV. */
   language: 'ru' | 'en' | 'auto'
+  /** Size of the clock and date, percent, 70 to 180. */
+  clock_scale: number
+  /** How an icon answers focus; layouts cross-fade unless 'none'. */
+  anim_style: AnimStyle
+  /** Speed of those animations, percent, 50 to 200. */
+  anim_speed: number
   /** The first visible apps in `order` that sit in the dock, 0 to 8. */
   dock_size: number
   /** Apps per row in the grid, 3 to 8. */

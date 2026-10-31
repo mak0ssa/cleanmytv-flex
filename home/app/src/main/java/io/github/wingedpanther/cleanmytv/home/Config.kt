@@ -19,7 +19,7 @@ data class FreePos(val pkg: String, val x: Int, val y: Int)
 /** Everything CleanMyTV can change. The desktop app sends any subset; the rest keeps its value. */
 data class HomeConfig(
     // Arrangement
-    val layout: String = "shelf", // shelf, split, rail
+    val layout: String = "shelf", // shelf, split, rail, mirror, center, bottom, free (only the free area, no other layout)
     val sections: List<String> = listOf("nowplaying", "dock", "rows", "folders", "grid"), // top to bottom; absent = hidden
     val topSpace: Int = 25, // percent of the screen left open above the apps (shelf)
     val quick: List<String> = listOf("inputs", "wifi", "settings"), // quick-settings icons, in order
@@ -49,6 +49,10 @@ data class HomeConfig(
     val drawerColumns: Int = 6,
     val drawerAutoclose: Int = 0, // seconds without a button press before it closes; 0 = never
     val drawerDim: Int = 60, // percent of shade over the home screen behind it
+    // Animations: how an icon answers focus (zoom, lift, bounce, none) and how fast; layouts cross-fade unless "none".
+    val animStyle: String = "zoom",
+    val animSpeed: Int = 100, // percent, 50 slow to 200 fast
+    val clockScale: Int = 100, // percent, size of the clock and date
     val language: String = "ru", // ru, en, auto (follow the TV's own language)
     val dockSize: Int = 5, // the first visible apps in `order` sit in the dock
     val columns: Int = 6, // apps per row in the grid
@@ -97,6 +101,9 @@ data class HomeConfig(
         .put("drawer_autoclose", drawerAutoclose)
         .put("drawer_dim", drawerDim)
         .put("language", language)
+        .put("clock_scale", clockScale)
+        .put("anim_style", animStyle)
+        .put("anim_speed", animSpeed)
         .put("dock_size", dockSize)
         .put("columns", columns)
         .put("show_names", showNames)
@@ -170,7 +177,7 @@ data class HomeConfig(
             return base.copy(
                 buttonsOn = bool("buttons_on", base.buttonsOn),
                 buttons = buttons() ?: base.buttons,
-                layout = choice("layout", base.layout, setOf("shelf", "split", "rail")),
+                layout = choice("layout", base.layout, setOf("shelf", "split", "rail", "mirror", "center", "bottom", "free")),
                 sections = strings("sections", SECTIONS) ?: base.sections,
                 topSpace = int("top_space", base.topSpace, 0, 40),
                 quick = strings("quick", QUICK) ?: base.quick,
@@ -193,6 +200,9 @@ data class HomeConfig(
                 drawerColumns = int("drawer_columns", base.drawerColumns, 3, 8),
                 drawerAutoclose = int("drawer_autoclose", base.drawerAutoclose, 0, 120),
                 drawerDim = int("drawer_dim", base.drawerDim, 0, 95),
+                clockScale = int("clock_scale", base.clockScale, 70, 180),
+                animStyle = choice("anim_style", base.animStyle, setOf("zoom", "lift", "bounce", "none")),
+                animSpeed = int("anim_speed", base.animSpeed, 50, 200),
                 language = choice("language", base.language, setOf("ru", "en", "auto")),
                 dockSize = int("dock_size", base.dockSize, 0, 8),
                 columns = int("columns", base.columns, 3, 8),

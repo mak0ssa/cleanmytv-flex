@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import type { ApplyResult, ButtonAction, DrawerStyle, HomeButton, HomeConfig, HomeFree, HomeGroup, HomeLayout, HomeSection, HomeStatus, KeyPress, QuickId, TvApp } from '@shared/api'
+import type { AnimStyle, ApplyResult, ButtonAction, DrawerStyle, HomeButton, HomeConfig, HomeFree, HomeGroup, HomeLayout, HomeSection, HomeStatus, KeyPress, QuickId, TvApp } from '@shared/api'
 import type { ScreenProps } from '../App'
 import { AppOrder } from '../components/AppOrder'
 import { FreeEditor, nextSpot, tidy } from '../components/FreeEditor'
@@ -7,7 +7,7 @@ import { HomePreview, QUICK_LABEL, QuickIcon } from '../components/HomePreview'
 import { Busy, Confirm, ResultNotice, Slider, StatusChip, Toggle, errorText } from '../components/ui'
 import { prepareWallpaper, thumbnail } from '../lib/image'
 import { fetchBingDaily } from '../lib/backgrounds'
-import { findPlaces, type Place } from '../lib/places'
+import { checkWeather, findPlaces, type Place } from '../lib/places'
 
 type Tab = 'overview' | 'apps' | 'layout' | 'place' | 'look' | 'widgets' | 'music' | 'buttons'
 
@@ -409,7 +409,11 @@ function Groups(props: { kind: 'rows' | 'folders'; title: string; hint: string; 
 const LAYOUTS: { id: HomeLayout; label: string; hint: string; mini: [number, number, number, number, boolean][] }[] = [
   { id: 'shelf', label: 'Полка', hint: 'Верхняя панель, свободное место, приложения ниже.', mini: [[6, 6, 30, 6, true], [64, 6, 30, 6, true], [6, 40, 88, 24, false], [6, 72, 88, 18, true]] },
   { id: 'split', label: 'Колонки', hint: 'Часы и быстрые настройки слева, приложения справа.', mini: [[6, 10, 26, 18, true], [6, 62, 20, 24, true], [38, 8, 56, 26, false], [38, 42, 56, 18, true]] },
-  { id: 'rail', label: 'Рейка', hint: 'Значки вдоль левого края, которые раскрываются с подписями.', mini: [[3, 6, 6, 84, true], [70, 6, 24, 8, true], [16, 24, 78, 28, false], [16, 60, 78, 18, true]] }
+  { id: 'rail', label: 'Рейка', hint: 'Значки вдоль левого края, которые раскрываются с подписями.', mini: [[3, 6, 6, 84, true], [70, 6, 24, 8, true], [16, 24, 78, 28, false], [16, 60, 78, 18, true]] },
+  { id: 'mirror', label: 'Зеркало', hint: 'Приложения слева, часы и быстрые настройки справа.', mini: [[68, 10, 26, 18, true], [68, 62, 20, 24, true], [6, 8, 56, 26, false], [6, 42, 56, 18, true]] },
+  { id: 'center', label: 'По центру', hint: 'Часы, погода и значки по центру сверху, ниже приложения.', mini: [[34, 6, 32, 10, true], [28, 19, 44, 6, true], [6, 36, 88, 24, false], [6, 68, 88, 18, true]] },
+  { id: 'bottom', label: 'Информация внизу', hint: 'Приложения сверху, часы, погода и значки в полосе внизу.', mini: [[6, 6, 88, 26, false], [6, 38, 88, 24, false], [6, 82, 22, 10, true], [72, 82, 22, 10, true]] },
+  { id: 'free', label: 'Только свободная область', hint: 'Без дока, рядов и списка: на экране только иконки, расставленные вами.', mini: [[12, 14, 22, 20, false], [58, 10, 24, 20, false], [30, 52, 22, 22, false], [70, 60, 20, 18, false]] }
 ]
 
 const SECTION_LABEL: Record<HomeSection, string> = { nowplaying: 'Сейчас играет', dock: 'Док', rows: 'Ряды', folders: 'Папки', grid: 'Все приложения', free: 'Свободная область' }
@@ -458,6 +462,7 @@ function LayoutTab({ apps, cfg, set }: { apps: TvApp[]; cfg: HomeConfig; set: Se
       </div>
       <div className="card">
         <h2>Макет</h2>
+        {cfg.layout === 'free' && <p className="muted small" style={{ marginTop: 0 }}>Включён режим «Только свободная область»: док, ряды, папки и список приложений не показываются. Иконки расставляются на вкладке «Расстановка и меню». Чтобы вернуть обычный макет, выберите другой.</p>}
         <div className="layout-pick">
           {LAYOUTS.map((l) => (
             <button key={l.id} className={cfg.layout === l.id ? 'on' : ''} onClick={() => set({ layout: l.id })} aria-pressed={cfg.layout === l.id}>
@@ -471,7 +476,7 @@ function LayoutTab({ apps, cfg, set }: { apps: TvApp[]; cfg: HomeConfig; set: Se
             </button>
           ))}
         </div>
-        {cfg.layout === 'shelf' && (
+        {(cfg.layout === 'shelf' || cfg.layout === 'center') && (
           <div style={{ marginTop: 14 }}>
             <Slider label="Место над приложениями" hint="Свободные обои между верхней панелью и первым рядом." value={cfg.top_space} min={0} max={40} unit="%" onChange={(v) => set({ top_space: v }, 250)} />
           </div>
@@ -487,7 +492,7 @@ function LayoutTab({ apps, cfg, set }: { apps: TvApp[]; cfg: HomeConfig; set: Se
         <div className="card">
           <h2>Быстрые настройки</h2>
           <p className="muted small">
-            {cfg.layout === 'rail' ? 'Значки в рейке.' : cfg.layout === 'split' ? 'Внизу левой части.' : 'Под часами и датой.'} Телевизор скрывает те, что не может открыть, например «Входы» на приставке
+            {cfg.layout === 'rail' ? 'Значки в рейке.' : cfg.layout === 'split' ? 'Внизу левой части.' : cfg.layout === 'mirror' ? 'Внизу правой части.' : cfg.layout === 'bottom' ? 'В полосе внизу, справа.' : cfg.layout === 'center' ? 'Под часами, по центру.' : 'Под часами и датой.'} Телевизор скрывает те, что не может открыть, например «Входы» на приставке
             без HDMI-входов или «Поиск», когда приложение поиска отключено.
           </p>
           <OrderList
@@ -522,6 +527,11 @@ function LayoutTab({ apps, cfg, set }: { apps: TvApp[]; cfg: HomeConfig; set: Se
               </button>
             ))}
           </div>
+          {cfg.clock !== 'off' && (
+            <div style={{ marginTop: 14 }}>
+              <Slider label="Размер часов" value={cfg.clock_scale} min={70} max={180} step={10} unit="%" onChange={(v) => set({ clock_scale: v }, 250)} />
+            </div>
+          )}
         </div>
         <div className="card">
           <h2>Приветствие</h2>
@@ -577,9 +587,10 @@ function PlaceTab({ apps, cfg, set }: { apps: TvApp[]; cfg: HomeConfig; set: Set
         <h2>Свободная область</h2>
         <p className="muted small">
           Размещайте значки где угодно, а не рядами. Перетащите плитку или щёлкните по ней и двигайте стрелками (Shift — шаг крупнее). Приложение, поставленное сюда, уходит из дока и из «Всех приложений». Картинка показана для макета «Полка»;
-          в «Колонках» и «Рейке» ширина меньше, но плитки сохраняют своё относительное положение.
+          в «Колонках» и «Рейке» ширина меньше, но плитки сохраняют своё относительное положение. Двигать и добавлять иконки можно и с пульта: кнопка Menu → «Двигать иконки» или «Добавить приложение».
         </p>
         <Toggle label="Показывать свободную область" hint="Она стоит среди разделов; порядок меняется во вкладке «Макет»." checked={freeOn} onChange={(on) => set({ sections: on ? withSection(cfg.sections) : cfg.sections.filter((s) => s !== 'free') })} />
+        <Toggle label="Отключить макет: только свободная область" hint="Экран занят только вашими иконками. Док, ряды, папки и «Все приложения» скрываются; часы, погода и быстрые настройки остаются." checked={cfg.layout === 'free'} onChange={(on) => set(on ? { layout: 'free', sections: withSection(cfg.sections) } : { layout: 'shelf' })} />
         <div className="grid-2" style={{ marginTop: 10 }}>
           <Slider label="Высота области" hint="Процент высоты экрана." value={cfg.free_height} min={20} max={80} step={5} unit="%" onChange={(v) => set({ free_height: v }, 250)} />
           <Slider label="Размер плиток" value={cfg.free_scale} min={60} max={200} step={10} unit="%" onChange={(v) => set({ free_scale: v }, 250)} />
@@ -711,6 +722,23 @@ function LookTab(props: { cfg: HomeConfig; set: SetFn; busy: boolean; wallpaper:
       </div>
 
       <div className="card">
+        <h2>Анимации иконок</h2>
+        <p className="muted">Как иконка отвечает, когда на неё наводят пульт, и плавный переход при смене макета.</p>
+        <div className="seg">
+          {([['zoom', 'Увеличение'], ['lift', 'Подъём'], ['bounce', 'Пружина'], ['none', 'Без анимации']] as [AnimStyle, string][]).map(([id, label]) => (
+            <button key={id} className={cfg.anim_style === id ? 'on' : ''} onClick={() => set({ anim_style: id })}>
+              {label}
+            </button>
+          ))}
+        </div>
+        {cfg.anim_style !== 'none' && (
+          <div style={{ marginTop: 14 }}>
+            <Slider label="Скорость анимации" hint="Меньше — плавнее и медленнее, больше — резче." value={cfg.anim_speed} min={50} max={200} step={10} unit="%" onChange={(v) => set({ anim_speed: v }, 250)} />
+          </div>
+        )}
+      </div>
+
+      <div className="card">
         <h2>Язык лаунчера на телевизоре</h2>
         <p className="muted">На каком языке показывать надписи на самом телевизоре: названия разделов, меню, приветствие.</p>
         <div className="seg">
@@ -787,6 +815,21 @@ function WidgetsTab({ cfg, set }: { cfg: HomeConfig; set: SetFn }): ReactNode {
     }
   }
 
+  const [check, setCheck] = useState<{ ok: boolean; text: string } | null>(null)
+  const [checking, setChecking] = useState(false)
+  async function verify(): Promise<void> {
+    setChecking(true)
+    setCheck(null)
+    try {
+      const t = await checkWeather(cfg.weather_lat, cfg.weather_lon)
+      setCheck({ ok: true, text: `Сервер погоды отвечает: сейчас в «${cfg.weather_place}» около ${t}°C. Значит, место выбрано верно. Если на телевизоре погоды нет, там написана причина (например, UnknownHostException — у ТВ нет доступа к интернету или DNS блокирует api.open-meteo.com).` })
+    } catch (e) {
+      setCheck({ ok: false, text: errorText(e) })
+    } finally {
+      setChecking(false)
+    }
+  }
+
   function pick(p: Place): void {
     set({ weather_place: p.name, weather_lat: p.lat, weather_lon: p.lon })
     setPlaces(null)
@@ -819,6 +862,10 @@ function WidgetsTab({ cfg, set }: { cfg: HomeConfig; set: SetFn }): ReactNode {
             <button className="btn small ghost" onClick={() => set({ weather_place: '' })}>
               Выключить
             </button>
+            <button className="btn small" disabled={checking} onClick={() => void verify()}>
+              Проверить погоду
+            </button>
+            {checking && <Busy text="Проверяю" />}
           </div>
         ) : null}
         <form
@@ -834,6 +881,7 @@ function WidgetsTab({ cfg, set }: { cfg: HomeConfig; set: SetFn }): ReactNode {
           </button>
           {searching && <Busy text="Ищу" />}
         </form>
+        {check && <div className={`notice ${check.ok ? 'ok' : 'error'}`} style={{ marginBottom: 14 }}>{check.text}</div>}
         {error && <div className="notice error" style={{ marginTop: 12, marginBottom: 0 }}>{error}</div>}
         {places && (
           <ul className="place-list">

@@ -20,13 +20,14 @@ export const DEFAULTS: HomeConfig = {
   rows: [], folders: [], dock_scale: 100, tile_scale: 100, buttons_on: false, buttons: [],
   accent: '#4CAF50', focus: 'glow', background: '#1C2A1F', wallpaper_dim: 35,
   order: [], hidden: [], free: [], free_height: 45, free_scale: 100,
-  drawer_on: false, drawer_pill: true, drawer_style: 'sheet', drawer_columns: 6, drawer_autoclose: 0, drawer_dim: 60, language: 'ru', dock_size: 5, columns: 6, show_names: true, clock: 'time_date', greeting: '',
+  drawer_on: false, drawer_pill: true, drawer_style: 'sheet', drawer_columns: 6, drawer_autoclose: 0, drawer_dim: 60, language: 'ru', clock_scale: 100, anim_style: 'zoom', anim_speed: 100, dock_size: 5, columns: 6, show_names: true, clock: 'time_date', greeting: '',
   weather_place: '', weather_lat: 0, weather_lon: 0, weather_unit: 'c',
   visualiser: true, viz_style: 'bars', viz_bars: 32, viz_height: 12, viz_opacity: 85, viz_colour: 'accent', viz_peaks: true, viz_sensitivity: 100
 }
 
 const CHOICES = {
-  layout: ['shelf', 'split', 'rail'],
+  layout: ['shelf', 'split', 'rail', 'mirror', 'center', 'bottom', 'free'],
+  anim_style: ['zoom', 'lift', 'bounce', 'none'],
   focus: ['glow', 'outline', 'none'],
   clock: ['time_date', 'time', 'off'],
   viz_style: ['bars', 'mirror', 'wave'],
@@ -50,7 +51,7 @@ const RANGES = {
   top_space: [0, 40], dock_scale: [60, 150], tile_scale: [60, 150],
   wallpaper_dim: [0, 80], dock_size: [0, 8], columns: [3, 8],
   viz_bars: [8, 64], viz_height: [4, 40], viz_opacity: [20, 100], viz_sensitivity: [25, 300],
-  free_height: [20, 80], free_scale: [60, 200], drawer_columns: [3, 8], drawer_autoclose: [0, 120], drawer_dim: [0, 95]
+  free_height: [20, 80], free_scale: [60, 200], drawer_columns: [3, 8], drawer_autoclose: [0, 120], drawer_dim: [0, 95], clock_scale: [70, 180], anim_speed: [50, 200]
 } as const
 
 const BOOLS = ['show_names', 'visualiser', 'viz_peaks', 'buttons_on', 'drawer_on', 'drawer_pill'] as const

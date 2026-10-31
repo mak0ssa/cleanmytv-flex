@@ -6,6 +6,7 @@ const W = 960
 const H = 540
 const SAFE_X = 48
 const SAFE_Y = 27
+const BLEED_PX = 14
 const GAP = 16
 
 const QUICK_GLYPH: Record<QuickId, string> = {
@@ -42,7 +43,7 @@ function model(apps: TvApp[], cfg: HomeConfig) {
   )
   const inFolders = new Set(cfg.folders.flatMap((f) => f.apps))
   // Freely placed apps leave the dock and the grid, but only while the free section is on.
-  const free = cfg.sections.includes('free') ? cfg.free.flatMap((f) => (by.has(f.pkg) && !cfg.hidden.includes(f.pkg) ? [{ app: by.get(f.pkg)!, x: f.x, y: f.y }] : [])) : []
+  const free = cfg.sections.includes('free') || cfg.layout === 'free' ? cfg.free.flatMap((f) => (by.has(f.pkg) && !cfg.hidden.includes(f.pkg) ? [{ app: by.get(f.pkg)!, x: f.x, y: f.y }] : [])) : []
   const inFree = new Set(free.map((f) => f.app.pkg))
   const dock = ordered.filter((a) => !inFolders.has(a.pkg) && !inFree.has(a.pkg)).slice(0, cfg.dock_size)
   const grid = ordered.filter((a) => !inFolders.has(a.pkg) && !inFree.has(a.pkg) && !dock.includes(a))
@@ -164,12 +165,13 @@ function Sections({ apps, cfg, width, dockW, showFolders = true }: { apps: TvApp
   )
 }
 
-function Clock({ cfg, size, dateSize, align }: { cfg: HomeConfig; size: number; dateSize: number; align: 'left' | 'right' }): ReactNode {
+function Clock({ cfg, size, dateSize, align }: { cfg: HomeConfig; size: number; dateSize: number; align: 'left' | 'right' | 'center' }): ReactNode {
   if (cfg.clock === 'off') return null
+  const k = cfg.clock_scale / 100
   return (
     <div style={{ textAlign: align }}>
-      <div style={{ fontSize: size, fontWeight: 300, lineHeight: 1.1, fontFamily: 'var(--font)' }}>9:41</div>
-      {cfg.clock === 'time_date' && <div style={{ fontSize: dateSize, color: '#D7CFC4', fontFamily: 'var(--font)' }}>среда, 28 октября</div>}
+      <div style={{ fontSize: size * k, fontWeight: 300, lineHeight: 1.1, fontFamily: 'var(--font)' }}>9:41</div>
+      {cfg.clock === 'time_date' && <div style={{ fontSize: dateSize * k, color: '#D7CFC4', fontFamily: 'var(--font)' }}>среда, 28 октября</div>}
       {cfg.weather_place && (
         <div style={{ fontSize: dateSize, color: '#D7CFC4', fontFamily: 'var(--font)', marginTop: 4 }}>
           ☁ 14°  16° / 9°  {cfg.weather_place}
@@ -203,8 +205,85 @@ export function HomePreview({ apps, cfg }: { apps: TvApp[]; cfg: HomeConfig }): 
       ? `linear-gradient(rgba(0,0,0,${cfg.wallpaper_dim / 100}), rgba(0,0,0,${cfg.wallpaper_dim / 100})), linear-gradient(160deg, #6b5a3e, #2f3b2a 55%, #1a2418)`
       : cfg.background
   }
+  const quickRow = (gap: number): ReactNode =>
+    quick.length > 0 && (
+      <div style={{ display: 'flex', gap }}>
+        {quick.map((q) => (
+          <span key={q} style={{ width: 40, height: 40, borderRadius: 20, background: 'rgba(255,255,255,0.08)', display: 'grid', placeItems: 'center' }}>
+            <QuickIcon id={q} size={20} />
+          </span>
+        ))}
+      </div>
+    )
   let body: ReactNode
-  if (cfg.layout === 'split') {
+  if (cfg.layout === 'free') {
+    const m = model(apps, cfg)
+    const tileW = (120 * cfg.free_scale) / 100
+    const tileH = (tileW * 9) / 16 + (cfg.show_names ? 26 : 0)
+    const cw = W - SAFE_X * 2 + BLEED_PX * 2
+    const ch = H - SAFE_Y * 2
+    body = (
+      <div style={{ height: '100%', position: 'relative' }}>
+        <div style={{ position: 'absolute', left: SAFE_X - BLEED_PX, top: SAFE_Y, width: cw, height: ch }}>
+          {m.free.map((f) => (
+            <div key={f.app.pkg} style={{ position: 'absolute', left: (Math.max(0, cw - BLEED_PX * 2 - tileW) * f.x) / 100 + BLEED_PX, top: (Math.max(0, ch - tileH) * f.y) / 100 }}>
+              <Tile app={f.app} w={tileW} names={cfg.show_names} cfg={cfg} />
+            </div>
+          ))}
+          {m.free.length === 0 && <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: '#D7CFC4', fontSize: 16 }}>Свободная область пуста</div>}
+        </div>
+        <div style={{ position: 'absolute', right: SAFE_X, top: SAFE_Y }}>
+          <Clock cfg={cfg} size={26} dateSize={12} align="right" />
+        </div>
+        {greet && <div style={{ position: 'absolute', left: SAFE_X, top: SAFE_Y + 4, fontSize: 20, fontWeight: 500 }}>{greet}</div>}
+        <div style={{ position: 'absolute', left: 0, right: 0, bottom: SAFE_Y, display: 'flex', justifyContent: 'center' }}>{quickRow(10)}</div>
+      </div>
+    )
+  } else if (cfg.layout === 'mirror') {
+    body = (
+      <div style={{ display: 'flex', height: '100%', background: 'linear-gradient(90deg, transparent 60%, rgba(28,42,31,0.7))' }}>
+        <div style={{ flex: 0.68, padding: `${SAFE_Y + 12}px 0 0 ${SAFE_X}px`, overflow: 'hidden' }}>
+          <Sections apps={apps} cfg={cfg} width={W * 0.68 - SAFE_X} dockW={168} />
+        </div>
+        <div style={{ flex: 0.32, padding: `${SAFE_Y + 24}px ${SAFE_X}px ${SAFE_Y + 48}px 0`, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 14 }}>
+          <Clock cfg={cfg} size={46} dateSize={15} align="right" />
+          {greet && <div style={{ fontSize: 18, fontWeight: 500 }}>{greet}</div>}
+          <div style={{ flex: 1 }} />
+          {quick.map((q) => (
+            <div key={q} style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 15 }}>
+              {QUICK_LABEL[q]} <QuickIcon id={q} size={20} />
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  } else if (cfg.layout === 'center') {
+    body = (
+      <div style={{ height: '100%', padding: `${SAFE_Y}px ${SAFE_X}px 0`, overflow: 'hidden', background: 'linear-gradient(rgba(28,42,31,0.6), transparent 230px)' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+          {greet && <div style={{ fontSize: 20, fontWeight: 500 }}>{greet}</div>}
+          <Clock cfg={cfg} size={40} dateSize={14} align="center" />
+          <div style={{ marginTop: 6 }}>{quickRow(10)}</div>
+        </div>
+        <div style={{ height: (H * cfg.top_space) / 100 }} />
+        <Sections apps={apps} cfg={cfg} width={W - SAFE_X * 2} dockW={200} />
+      </div>
+    )
+  } else if (cfg.layout === 'bottom') {
+    body = (
+      <div style={{ height: '100%', position: 'relative' }}>
+        <div style={{ padding: `${SAFE_Y + 8}px ${SAFE_X}px 0`, overflow: 'hidden', height: '100%' }}>
+          <Sections apps={apps} cfg={cfg} width={W - SAFE_X * 2} dockW={200} />
+        </div>
+        <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: `28px ${SAFE_X}px ${SAFE_Y}px`, display: 'flex', alignItems: 'center', gap: 24, background: 'linear-gradient(transparent, rgba(28,42,31,0.9))' }}>
+          <Clock cfg={cfg} size={30} dateSize={12} align="left" />
+          <div style={{ flex: 1 }} />
+          {greet && <div style={{ fontSize: 16, fontWeight: 500 }}>{greet}</div>}
+          {quickRow(10)}
+        </div>
+      </div>
+    )
+  } else if (cfg.layout === 'split') {
     body = (
       <div style={{ display: 'flex', height: '100%', background: 'linear-gradient(90deg, rgba(28,42,31,0.7), transparent 60%)' }}>
         <div style={{ width: W * 0.32, padding: `${SAFE_Y + 24}px 0 ${SAFE_Y + 48}px ${SAFE_X}px`, display: 'flex', flexDirection: 'column', gap: 14 }}>

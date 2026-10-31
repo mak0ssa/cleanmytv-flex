@@ -2,7 +2,12 @@ package io.github.wingedpanther.cleanmytv.home
 
 import android.graphics.BitmapFactory
 import android.util.Log
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
@@ -49,6 +54,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -61,6 +67,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -127,14 +134,14 @@ private class Home(apps: List<TvApp>, val cfg: HomeConfig) {
     private val inFolders = cfg.folders.flatMap { it.apps }.toSet()
     /** Apps placed freely, with where. They leave the dock and the grid only while the free section is on. */
     val free: List<Pair<TvApp, FreePos>> =
-        if ("free" in cfg.sections) cfg.free.mapNotNull { f -> byPkg[f.pkg]?.takeIf { it.pkg !in cfg.hidden }?.let { it to f } } else emptyList()
+        if ("free" in cfg.sections || cfg.layout == "free") cfg.free.mapNotNull { f -> byPkg[f.pkg]?.takeIf { it.pkg !in cfg.hidden }?.let { it to f } } else emptyList()
     private val inFree = free.map { it.first.pkg }.toSet()
     val dock = shown.filter { it.pkg !in inFolders && it.pkg !in inFree }.take(cfg.dockSize)
     val grid = shown.filter { it.pkg !in inFolders && it.pkg !in inFree && it !in dock }
     val rows = cfg.rows.map { g -> g.name to g.apps.mapNotNull { byPkg[it] }.filter { it.pkg !in cfg.hidden } }.filter { it.second.isNotEmpty() }
     val folders = cfg.folders.map { g -> g.name to g.apps.mapNotNull { byPkg[it] } }.filter { it.second.isNotEmpty() }
     /** The tile that takes focus when Home opens, as "<section>:<package>" (an app can sit in two sections). */
-    val first: String? = cfg.sections.firstNotNullOfOrNull { s ->
+    val first: String? = if (cfg.layout == "free") free.firstOrNull()?.let { "free:${it.first.pkg}" } else cfg.sections.firstNotNullOfOrNull { s ->
         when (s) {
             "dock" -> dock.firstOrNull()?.let { "dock:${it.pkg}" }
             "rows" -> rows.firstOrNull()?.second?.firstOrNull()?.let { "row0:${it.pkg}" }
@@ -171,12 +178,17 @@ fun HomeScreen(visualiser: Visualiser, appsVersion: Int, open: androidx.compose.
 
     val track by NowPlaying.track.collectAsState()
     var weather by remember { mutableStateOf<WeatherNow?>(null) }
+    // Why there is no weather, shown in place of it so a broken widget is never silent.
+    var weatherNote by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(cfg.weatherPlace, cfg.weatherLat, cfg.weatherLon, cfg.weatherUnit) {
         weather = null
+        weatherNote = null
         if (cfg.weatherPlace.isBlank()) return@LaunchedEffect
+        weatherNote = Words.tr(cfg, "Weather loading…")
         // A failed refresh keeps the last reading; the next try is in 30 minutes, or 2 if there's none yet.
         while (true) {
-            Weather.fetch(cfg)?.let { weather = it }
+            val r = Weather.fetch(cfg)
+            if (r.now != null) { weather = r.now; weatherNote = null } else if (weather == null) weatherNote = Words.tr(cfg, "No weather data") + (r.error?.let { " ($it)" } ?: "")
             delay(if (weather == null) 2 * 60_000L else 30 * 60_000L)
         }
     }
@@ -190,6 +202,8 @@ fun HomeScreen(visualiser: Visualiser, appsVersion: Int, open: androidx.compose.
     var showInputs by remember { mutableStateOf(false) }
     var showDrawer by remember { mutableStateOf(false) }
     var showTune by remember { mutableStateOf(false) }
+    var showPicker by remember { mutableStateOf(false) }
+    val edit = remember { FreeEdit() }
     LaunchedEffect(open.value) {
         if (open.value == "inputs") showInputs = true
         if (open.value == "drawer") showDrawer = true
@@ -204,8 +218,22 @@ fun HomeScreen(visualiser: Visualiser, appsVersion: Int, open: androidx.compose.
         else resolve(ctx, a)?.let { i -> runCatching { ctx.startActivity(i) }.onFailure { Log.w(TAG, "${a.id}: $it") } }
     }
     val first = remember { FocusRequester() }
-    LaunchedEffect(home.first, cfg.layout) { if (home.first != null) runCatching { first.requestFocus() } }
-    val ui = Ui(cfg, accent, first, home.first, onFolder = { openFolder = it }, track = track, weather = weather)
+        // While editing, focus goes to the icon just added or last touched.
+    val focusKey = if (edit.on) (edit.selected ?: edit.grabbed)?.let { "free:$it" } ?: home.first else home.first
+    LaunchedEffect(home.first, cfg.layout, edit.on, edit.grabbed) { if (focusKey != null) runCatching { first.requestFocus() } }
+    val ui = Ui(cfg, accent, first, focusKey, onFolder = { openFolder = it }, track = track, weather = weather, edit = edit, weatherNote = weatherNote)
+    BackHandler(enabled = edit.on) { if (edit.grabbed != null) edit.grabbed = null else edit.on = false }
+
+    /** Makes sure the free area is among the sections, puts the app on it, and picks it up for moving. */
+    fun placeFree(app: TvApp) {
+        val spot = nextSpot(cfg.free)
+        val list = cfg.free.filter { it.pkg != app.pkg } + FreePos(app.pkg, spot.first, spot.second)
+        val sections = if ("free" in cfg.sections) cfg.sections else cfg.sections.indexOf("grid").let { i -> if (i < 0) cfg.sections + "free" else cfg.sections.take(i) + "free" + cfg.sections.drop(i) }
+        ConfigStore.update(ctx, org.json.JSONObject().put("free", freeJson(list)).put("sections", org.json.JSONArray(sections)))
+        edit.on = true
+        edit.selected = app.pkg
+        edit.grabbed = app.pkg
+    }
 
     Box(Modifier.fillMaxSize().background(Color(cfg.background))) {
         wallpaper?.let {
@@ -214,18 +242,33 @@ fun HomeScreen(visualiser: Visualiser, appsVersion: Int, open: androidx.compose.
         }
         // Rows sit over the lower half of the photo; a ground-tinted shade keeps their names readable.
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.35f to Color.Transparent, 1f to scrim(0.8f))))
-        when (cfg.layout) {
-            "split" -> SplitLayout(home, ui, quick, onQuick)
-            "rail" -> RailLayout(home, ui, quick, onQuick)
-            else -> ShelfLayout(home, ui, quick, onQuick)
+        val layouts: @Composable (String) -> Unit = { layout ->
+            when (layout) {
+                "split" -> SplitLayout(home, ui, quick, onQuick)
+                "rail" -> RailLayout(home, ui, quick, onQuick)
+                "mirror" -> MirrorLayout(home, ui, quick, onQuick)
+                "center" -> CenterLayout(home, ui, quick, onQuick)
+                "bottom" -> BottomLayout(home, ui, quick, onQuick)
+                "free" -> FreeOnlyLayout(home, ui, quick, onQuick)
+                else -> ShelfLayout(home, ui, quick, onQuick)
+            }
         }
+        // Changing the layout fades from one to the other, unless animations are off.
+        if (cfg.animStyle == "none") layouts(cfg.layout) else Crossfade(cfg.layout, animationSpec = animSpec(cfg), label = "layout") { layouts(it) }
         if (cfg.visualiser) Bars(visualiser, cfg, accent, Modifier.align(Alignment.BottomCenter).fillMaxWidth())
         // The apps menu's handle: a button at the bottom the D-pad reaches by pressing down from the last row.
-        if (cfg.drawerOn && cfg.drawerPill) DrawerPill(ui, Modifier.align(Alignment.BottomCenter).padding(bottom = SAFE_Y)) { showDrawer = true }
+        if (edit.on) EditBar(ui, edit, onAdd = { showPicker = true }, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = SAFE_Y))
+        if (cfg.drawerOn && cfg.drawerPill && !edit.on) DrawerPill(ui, Modifier.align(Alignment.BottomCenter).padding(bottom = if (cfg.layout == "bottom") SAFE_Y + 78.dp else SAFE_Y)) { showDrawer = true }
     }
 
     if (cfg.drawerOn && showDrawer) DrawerOverlay(home.shown, ui) { showDrawer = false }
-    if (showTune) TuneOverlay(ui) { showTune = false }
+    if (showTune) TuneOverlay(ui, onEdit = {
+        if (cfg.free.isEmpty()) showPicker = true else edit.on = true
+    }, onAdd = { showPicker = true }) { showTune = false }
+    if (showPicker) {
+        val placed = cfg.free.map { it.pkg }.toSet()
+        DrawerOverlay(home.shown.filter { it.pkg !in placed }, ui, title = Words.tr(cfg, "Add app"), pick = { placeFree(it) }) { showPicker = false }
+    }
 
     openFolder?.let { (name, list) -> FolderOverlay(name, list, ui) { openFolder = null } }
     if (showInputs) InputsOverlay(inputs, ui) { showInputs = false }
@@ -242,6 +285,12 @@ private class Ui(
     val weather: WeatherNow? = null,
     /** Called as an app is opened from a tile; the drawer uses it to close itself first. */
     val onLaunch: () -> Unit = {},
+    /** The free-area editing state, shared by the canvas and the bar under it. */
+    val edit: FreeEdit? = null,
+    /** When set, a tile hands its app here instead of opening it (the picker for the free area). */
+    val onPick: ((TvApp) -> Unit)? = null,
+    /** What to show in place of the weather while there is none: loading, or why it failed. */
+    val weatherNote: String? = null,
 ) {
     fun focusFor(section: String, app: TvApp): Modifier = if ("$section:${app.pkg}" == focusKey) Modifier.focusRequester(focus) else Modifier
 }
@@ -290,6 +339,73 @@ private fun SplitLayout(home: Home, ui: Ui, quick: List<QuickAction>, onQuick: (
             Column(Modifier.focusGroup(), verticalArrangement = Arrangement.spacedBy(6.dp)) { quick.forEach { QuickRow(it, ui, onQuick, expanded = true) } }
         }
         Sections(home, ui, Modifier.fillMaxSize(), PaddingValues(start = 0.dp, end = SAFE_X - BLEED, top = SAFE_Y + 12.dp, bottom = 96.dp), dockWidth = 168.dp)
+    }
+}
+
+/** Mirror: Split turned around: the apps on the left, the time, greeting and quick settings in the right third. */
+@Composable
+private fun MirrorLayout(home: Home, ui: Ui, quick: List<QuickAction>, onQuick: (QuickAction) -> Unit) {
+    val cfg = ui.cfg
+    Box(Modifier.fillMaxSize()) {
+        Box(Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(340.dp).background(Brush.horizontalGradient(listOf(Color.Transparent, scrim(0.7f)))))
+        Row(Modifier.fillMaxSize()) {
+            Sections(home, ui, Modifier.weight(0.68f).fillMaxHeight(), PaddingValues(start = SAFE_X - BLEED, end = 0.dp, top = SAFE_Y + 12.dp, bottom = 96.dp), dockWidth = 168.dp)
+            Column(Modifier.weight(0.32f).fillMaxHeight().padding(end = SAFE_X, top = SAFE_Y + 24.dp, bottom = SAFE_Y + 48.dp), horizontalAlignment = Alignment.End) {
+                Clock(cfg, 46.sp, 15.sp, Alignment.End)
+                WeatherLine(ui, 15.sp, Modifier.padding(top = 6.dp))
+                Spacer(Modifier.height(14.dp))
+                Greeting(cfg, 18.sp)
+                Spacer(Modifier.weight(1f))
+                Column(Modifier.focusGroup(), verticalArrangement = Arrangement.spacedBy(6.dp)) { quick.forEach { QuickRow(it, ui, onQuick, expanded = true) } }
+            }
+        }
+    }
+}
+
+/** Center: everything the top bar says is stacked in the middle, the quick-settings icons under it, then the apps. */
+@Composable
+private fun CenterLayout(home: Home, ui: Ui, quick: List<QuickAction>, onQuick: (QuickAction) -> Unit) {
+    val cfg = ui.cfg
+    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(scrim(0.6f), Color.Transparent), endY = 460f)))
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val open = maxHeight * (cfg.topSpace / 100f)
+        Column(Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxWidth().padding(top = SAFE_Y), horizontalAlignment = Alignment.CenterHorizontally) {
+                Greeting(cfg, 20.sp)
+                Clock(cfg, 40.sp, 14.sp, Alignment.CenterHorizontally)
+                WeatherLine(ui, 14.sp, Modifier.padding(top = 4.dp))
+                if (quick.isNotEmpty()) {
+                    Spacer(Modifier.height(10.dp))
+                    Row(Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(10.dp)) { quick.forEach { QuickButton(it, ui, onQuick) } }
+                }
+            }
+            Sections(home, ui, Modifier.fillMaxSize(), PaddingValues(start = SAFE_X - BLEED, end = SAFE_X - BLEED, top = open, bottom = 96.dp), dockWidth = 200.dp)
+        }
+    }
+}
+
+/** Bottom: the apps fill the top of the screen; the time, weather, greeting and quick settings sit in a bar along the bottom. */
+@Composable
+private fun BottomLayout(home: Home, ui: Ui, quick: List<QuickAction>, onQuick: (QuickAction) -> Unit) {
+    val cfg = ui.cfg
+    Box(Modifier.fillMaxSize()) {
+        Sections(home, ui, Modifier.fillMaxSize(), PaddingValues(start = SAFE_X - BLEED, end = SAFE_X - BLEED, top = SAFE_Y + 8.dp, bottom = 120.dp), dockWidth = 200.dp)
+        Row(
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                .background(Brush.verticalGradient(listOf(Color.Transparent, scrim(0.85f))))
+                .padding(start = SAFE_X, end = SAFE_X, top = 28.dp, bottom = SAFE_Y),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Clock(cfg, 30.sp, 12.sp, Alignment.Start)
+            Spacer(Modifier.width(24.dp))
+            WeatherLine(ui, 14.sp)
+            Spacer(Modifier.weight(1f))
+            Greeting(cfg, 16.sp)
+            if (quick.isNotEmpty()) {
+                Spacer(Modifier.width(20.dp))
+                Row(Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(10.dp)) { quick.forEach { QuickButton(it, ui, onQuick) } }
+            }
+        }
     }
 }
 
@@ -417,11 +533,24 @@ private fun focusStyle(ui: Ui, shape: RoundedCornerShape, zoom: Float = 1.08f) =
 private fun Tile(section: String, app: TvApp, ui: Ui, size: Modifier, big: Boolean) {
     val ctx = LocalContext.current
     val shape = RoundedCornerShape(if (big) 12.dp else 10.dp)
-    val (scale, glow, border) = focusStyle(ui, shape)
+    val (scale, glow, border) = focusStyle(ui, shape, zoom = 1f)
+    // The icon's answer to focus: a zoom, a lift, or a springy bounce, at the speed set on the desktop.
+    var focused by remember { mutableStateOf(false) }
+    val t by animateFloatAsState(if (focused) 1f else 0f, animSpec(ui.cfg), label = "focus")
+    val lift = with(androidx.compose.ui.platform.LocalDensity.current) { 8.dp.toPx() }
     Column(size) {
         Surface(
-            onClick = { ui.onLaunch(); runCatching { ctx.startActivity(app.launch) }.onFailure { Log.w(TAG, "launch ${app.pkg}: $it") } },
-            modifier = ui.focusFor(section, app).fillMaxWidth().aspectRatio(16f / 9f),
+            onClick = {
+                ui.onLaunch()
+                val pick = ui.onPick
+                if (pick != null) pick(app) else runCatching { ctx.startActivity(app.launch) }.onFailure { Log.w(TAG, "launch ${app.pkg}: $it") }
+            },
+            modifier = ui.focusFor(section, app).onFocusChanged { focused = it.isFocused }.graphicsLayer {
+                val grow = when (ui.cfg.animStyle) { "none" -> 0f; "lift" -> 0.04f; "bounce" -> 0.10f; else -> 0.08f }
+                val s = 1f + grow * t
+                scaleX = s; scaleY = s
+                if (ui.cfg.animStyle == "lift") translationY = -lift * t
+            }.fillMaxWidth().aspectRatio(16f / 9f),
             shape = ClickableSurfaceDefaults.shape(shape), scale = scale, glow = glow, border = border,
             colors = ClickableSurfaceDefaults.colors(containerColor = TILE, focusedContainerColor = TILE_FOCUSED)
         ) {
@@ -497,7 +626,11 @@ private fun NowPlayingCard(t: Track, ui: Ui) {
 /** Icon, temperature, today's high and low, and the place, in one muted line. */
 @Composable
 private fun WeatherLine(ui: Ui, size: androidx.compose.ui.unit.TextUnit, modifier: Modifier = Modifier) {
-    val w = ui.weather ?: return
+    val w = ui.weather
+    if (w == null) {
+        ui.weatherNote?.let { Text(it, color = MUTED, fontSize = size, fontFamily = CLOCK, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = modifier) }
+        return
+    }
     Row(modifier, verticalAlignment = Alignment.CenterVertically) {
         Image(weatherIcon(w), null, Modifier.size(with(androidx.compose.ui.platform.LocalDensity.current) { size.toDp() * 1.3f }), colorFilter = ColorFilter.tint(MUTED))
         Spacer(Modifier.width(6.dp))
@@ -589,29 +722,134 @@ private fun Clock(cfg: HomeConfig, timeSize: androidx.compose.ui.unit.TextUnit, 
     var now by remember { mutableStateOf(Date()) }
     LaunchedEffect(Unit) { while (true) { now = Date(); delay(1000L - System.currentTimeMillis() % 1000) } }
     Column(horizontalAlignment = align) {
-        Text(DateFormat.getTimeInstance(DateFormat.SHORT).format(now), color = TEXT, fontSize = timeSize, fontFamily = CLOCK, fontWeight = FontWeight.Light, maxLines = 1, softWrap = false)
-        if (cfg.clock == "time_date") Text(DateFormat.getDateInstance(DateFormat.FULL).format(now), color = MUTED, fontSize = dateSize, fontFamily = CLOCK)
+        Text(DateFormat.getTimeInstance(DateFormat.SHORT).format(now), color = TEXT, fontSize = timeSize * (cfg.clockScale / 100f), fontFamily = CLOCK, fontWeight = FontWeight.Light, maxLines = 1, softWrap = false)
+        if (cfg.clock == "time_date") Text(DateFormat.getDateInstance(DateFormat.FULL).format(now), color = MUTED, fontSize = dateSize * (cfg.clockScale / 100f), fontFamily = CLOCK)
     }
 }
 
 // ---- Free placement and the apps menu -------------------------------------------------------------
 
+/** The free area being edited from the remote: which icon is picked up, and which one was touched last. */
+private class FreeEdit {
+    var on by mutableStateOf(false)
+    var grabbed by mutableStateOf<String?>(null)
+    var selected by mutableStateOf<String?>(null)
+}
+
+private fun freeJson(list: List<FreePos>) =
+    org.json.JSONArray(list.map { org.json.JSONObject().put("pkg", it.pkg).put("x", it.x).put("y", it.y) })
+
+/** Where a new icon lands: along a staggered diagonal, so it doesn't sit on the last one. Same as the desktop editor. */
+private fun nextSpot(placed: List<FreePos>): Pair<Int, Int> =
+    Pair((6 + (placed.size * 17) % 80).coerceIn(0, 100), (8 + (placed.size * 23) % 70).coerceIn(0, 100))
+
+/** How fast and how springy things move, from the animation settings. */
+private fun <T> animSpec(cfg: HomeConfig): FiniteAnimationSpec<T> =
+    if (cfg.animStyle == "bounce") spring(dampingRatio = 0.4f, stiffness = 400f * cfg.animSpeed / 100f)
+    else tween(if (cfg.animStyle == "none") 0 else 220 * 100 / cfg.animSpeed.coerceAtLeast(50))
+
 /**
- * Apps put wherever the desktop editor left them. x and y are percent of the room the tile has (0 is the
- * left or top edge, 100 the right or bottom edge), so a tile never leaves the canvas whatever its size.
+ * Apps put wherever the desktop editor, or the remote, left them. x and y are percent of the room the tile
+ * has (0 is the left or top edge, 100 the right or bottom edge), so a tile never leaves the canvas whatever its
+ * size. In edit mode OK picks an icon up, the arrows move it 2 percent a press, and OK puts it down.
  */
 @Composable
 private fun FreeCanvas(placed: List<Pair<TvApp, FreePos>>, ui: Ui, height: Dp) {
     val cfg = ui.cfg
+    val ctx = LocalContext.current
+    val edit = ui.edit
     BoxWithConstraints(Modifier.fillMaxWidth().height(height).focusGroup()) {
         val tileW = 120.dp * (cfg.freeScale / 100f)
         // The picture is 16:9; the name under it takes about 26 dp.
         val tileH = tileW * 9f / 16f + if (cfg.showNames) 26.dp else 0.dp
-        for ((app, pos) in placed) {
-            val x = maxOf(0.dp, maxWidth - BLEED * 2 - tileW) * (pos.x / 100f) + BLEED
-            val y = maxOf(0.dp, height - tileH) * (pos.y / 100f)
-            Box(Modifier.offset(x, y)) { Tile("free", app, ui, Modifier.width(tileW), big = false) }
+        for ((app, pos) in placed) key(app.pkg) {
+            val x by animateDpAsState(maxOf(0.dp, maxWidth - BLEED * 2 - tileW) * (pos.x / 100f) + BLEED, animSpec(cfg), label = "x")
+            val y by animateDpAsState(maxOf(0.dp, height - tileH) * (pos.y / 100f), animSpec(cfg), label = "y")
+            fun moveBy(dx: Int, dy: Int) {
+                val next = cfg.free.map { if (it.pkg == app.pkg) FreePos(it.pkg, (it.x + dx).coerceIn(0, 100), (it.y + dy).coerceIn(0, 100)) else it }
+                ConfigStore.update(ctx, org.json.JSONObject().put("free", freeJson(next)))
+            }
+            var mod = Modifier.offset(x, y)
+            if (edit?.on == true) {
+                mod = mod.onFocusChanged { if (it.hasFocus) edit.selected = app.pkg }.onPreviewKeyEvent { e ->
+                    if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    val held = edit.grabbed == app.pkg
+                    when {
+                        held && e.key == Key.DirectionLeft -> { moveBy(-2, 0); true }
+                        held && e.key == Key.DirectionRight -> { moveBy(2, 0); true }
+                        held && e.key == Key.DirectionUp -> { moveBy(0, -2); true }
+                        held && e.key == Key.DirectionDown -> { moveBy(0, 2); true }
+                        e.key == Key.DirectionCenter || e.key == Key.Enter -> { edit.grabbed = if (held) null else app.pkg; true }
+                        else -> false
+                    }
+                }
+            }
+            Box(mod) { Tile("free", app, ui, Modifier.width(tileW), big = false) }
         }
+    }
+}
+
+/** The whole screen is the free area: no dock, rows or grid. The time, weather and quick settings stay if they are on. */
+@Composable
+private fun FreeOnlyLayout(home: Home, ui: Ui, quick: List<QuickAction>, onQuick: (QuickAction) -> Unit) {
+    val cfg = ui.cfg
+    Box(Modifier.fillMaxSize()) {
+        BoxWithConstraints(Modifier.fillMaxSize().padding(start = SAFE_X - BLEED, end = SAFE_X - BLEED, top = SAFE_Y, bottom = SAFE_Y)) {
+            if (home.free.isNotEmpty()) FreeCanvas(home.free, ui, maxHeight)
+        }
+        Column(Modifier.align(Alignment.TopEnd).padding(end = SAFE_X, top = SAFE_Y), horizontalAlignment = Alignment.End) {
+            Clock(cfg, 26.sp, 12.sp, Alignment.End)
+            WeatherLine(ui, 13.sp, Modifier.padding(top = 4.dp))
+        }
+        Box(Modifier.align(Alignment.TopStart).padding(start = SAFE_X, top = SAFE_Y + 4.dp)) { Greeting(cfg, 20.sp) }
+        if (quick.isNotEmpty() && ui.edit?.on != true) {
+            Row(Modifier.align(Alignment.BottomCenter).padding(bottom = SAFE_Y).focusGroup(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                quick.forEach { QuickButton(it, ui, onQuick) }
+            }
+        }
+        if (home.free.isEmpty()) {
+            Text(
+                if (Words.ru(cfg)) "Свободная область пуста. Нажмите Menu и выберите «Добавить приложение»." else "The free area is empty. Press Menu and choose Add app.",
+                color = MUTED, fontSize = 16.sp, modifier = Modifier.align(Alignment.Center)
+            )
+        }
+    }
+}
+
+/** Under the canvas while editing from the remote: add an icon, take the touched one away, or finish. */
+@Composable
+private fun EditBar(ui: Ui, edit: FreeEdit, onAdd: () -> Unit, modifier: Modifier) {
+    val cfg = ui.cfg
+    val ctx = LocalContext.current
+    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(Words.tr(cfg, "Press OK to pick up an icon, arrows move it, OK drops it. Back closes."), color = TEXT, fontSize = 13.sp, modifier = Modifier.padding(bottom = 8.dp))
+        Row(Modifier.focusGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            PillButton(Words.tr(cfg, "Add app"), ui, onAdd)
+            PillButton(Words.tr(cfg, "Remove"), ui) {
+                val gone = edit.selected ?: return@PillButton
+                ConfigStore.update(ctx, org.json.JSONObject().put("free", freeJson(cfg.free.filter { it.pkg != gone })))
+                edit.selected = null
+                edit.grabbed = null
+            }
+            PillButton(Words.tr(cfg, "Done"), ui) { edit.on = false; edit.grabbed = null }
+        }
+    }
+}
+
+/** A round-ended button with a label, for the bars under the home screen. */
+@Composable
+private fun PillButton(label: String, ui: Ui, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(50)
+    val (scale, glow, border) = focusStyle(ui, shape, zoom = 1.06f)
+    var focused by remember { mutableStateOf(false) }
+    val ink = if (focused) onAccent(ui.accent) else TEXT
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.height(40.dp).onFocusChanged { focused = it.isFocused },
+        shape = ClickableSurfaceDefaults.shape(shape), scale = scale, glow = glow, border = border,
+        colors = ClickableSurfaceDefaults.colors(containerColor = scrim(0.7f), focusedContainerColor = ui.accent.copy(alpha = 0.9f))
+    ) {
+        Row(Modifier.padding(horizontal = 22.dp).fillMaxHeight(), verticalAlignment = Alignment.CenterVertically) { Text(label, color = ink, fontSize = 15.sp) }
     }
 }
 
@@ -641,7 +879,7 @@ private fun DrawerPill(ui: Ui, modifier: Modifier, onClick: () -> Unit) {
  * Back closes it, so does opening an app, and so can a quiet spell (`drawerAutoclose`).
  */
 @Composable
-private fun DrawerOverlay(apps: List<TvApp>, ui: Ui, onClose: () -> Unit) {
+private fun DrawerOverlay(apps: List<TvApp>, ui: Ui, title: String? = null, pick: ((TvApp) -> Unit)? = null, onClose: () -> Unit) {
     val cfg = ui.cfg
     val focus = remember { FocusRequester() }
     // Any button press restarts the quiet-spell clock.
@@ -675,10 +913,10 @@ private fun DrawerOverlay(apps: List<TvApp>, ui: Ui, onClose: () -> Unit) {
                 else -> RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)
             }
             Column(panel.background(PANEL.copy(alpha = 0.97f), shape).padding(start = SAFE_X - BLEED, end = SAFE_X - BLEED, top = 20.dp)) {
-                Text(Words.tr(cfg, "All apps"), color = TEXT, fontSize = 22.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(start = BLEED, bottom = 4.dp))
+                Text(title ?: Words.tr(cfg, "All apps"), color = TEXT, fontSize = 22.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(start = BLEED, bottom = 4.dp))
                 BoxWithConstraints(Modifier.weight(1f)) {
                     val w: Dp = (maxWidth - BLEED * 2 - GAP * (cols - 1)) / cols
-                    val inner = Ui(cfg, ui.accent, focus, apps.firstOrNull()?.let { "drawer:${it.pkg}" }, ui.onFolder, onLaunch = onClose)
+                    val inner = Ui(cfg, ui.accent, focus, apps.firstOrNull()?.let { "drawer:${it.pkg}" }, ui.onFolder, onLaunch = onClose, onPick = pick)
                     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
                         apps.chunked(cols).forEachIndexed { i, row ->
                             item("drawer$i") {
@@ -708,7 +946,7 @@ private val ACCENT_CHOICES = listOf(0xFF4CAF50, 0xFFFF3000, 0xFF2EC4B6, 0xFFFFB2
  * Left and Right (or OK) step a value; Back closes.
  */
 @Composable
-private fun TuneOverlay(ui: Ui, onClose: () -> Unit) {
+private fun TuneOverlay(ui: Ui, onEdit: () -> Unit, onAdd: () -> Unit, onClose: () -> Unit) {
     val ctx = LocalContext.current
     val cfg = ui.cfg
     val focus = remember { FocusRequester() }
@@ -719,7 +957,12 @@ private fun TuneOverlay(ui: Ui, onClose: () -> Unit) {
     fun word(s: String) = s.replace('_', ' ').replaceFirstChar { it.uppercase() }
     val freeOn = "free" in cfg.sections
     val rows = listOf(
-        Tune("Layout", word(cfg.layout)) { put("layout", cycle(listOf("shelf", "split", "rail"), cfg.layout, it)) },
+        Tune("Layout", word(cfg.layout)) { put("layout", cycle(listOf("shelf", "split", "rail", "mirror", "center", "bottom", "free"), cfg.layout, it)) },
+        Tune("Clock size", "${cfg.clockScale}%") { put("clock_scale", step(cfg.clockScale, it, 70, 180, 10)) },
+        Tune("Animation", word(cfg.animStyle)) { put("anim_style", cycle(listOf("zoom", "lift", "bounce", "none"), cfg.animStyle, it)) },
+        Tune("Animation speed", "${cfg.animSpeed}%") { put("anim_speed", step(cfg.animSpeed, it, 50, 200, 25)) },
+        Tune("Move icons", Words.tr(cfg, "Open")) { onClose(); onEdit() },
+        Tune("Add app", Words.tr(cfg, "Open")) { onClose(); onAdd() },
         Tune("Accent colour", "#%06X".format(cfg.accent and 0xFFFFFF)) { d ->
             put("accent", "#%06X".format(cycle(ACCENT_CHOICES, ACCENT_CHOICES.firstOrNull { it == cfg.accent } ?: ACCENT_CHOICES[0], d) and 0xFFFFFF))
         },

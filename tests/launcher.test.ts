@@ -139,6 +139,16 @@ describe('CleanMyTV Home', () => {
     await expect(H.setConfig({ drawer_on: 'yes' as never })).rejects.toThrow(/drawer_on/)
   })
 
+  it('sends the new layouts, the free-only layout, clock size and animations, and clamps them', async () => {
+    const cfg = await H.setConfig({ layout: 'free', clock_scale: 500, anim_style: 'bounce', anim_speed: 10, language: 'en' })
+    expect(cfg).toMatchObject({ layout: 'free', clock_scale: 180, anim_style: 'bounce', anim_speed: 50, language: 'en' })
+    for (const layout of ['mirror', 'center', 'bottom'] as const) expect((await H.setConfig({ layout })).layout).toBe(layout)
+    await expect(H.setConfig({ layout: 'grid' as never })).rejects.toThrow(/layout/)
+    await expect(H.setConfig({ anim_style: 'spin' as never })).rejects.toThrow(/anim_style/)
+    const quick = await H.setConfig({ quick: ['tune', 'drawer'] })
+    expect(quick.quick).toEqual(['tune', 'drawer'])
+  })
+
   it("lists the launcher's own apps and drops malformed entries", async () => {
     expect((await H.apps()).map((a) => a.pkg)).toEqual(['com.netflix.ninja', 'com.google.android.youtube.tv'])
   })
