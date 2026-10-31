@@ -8,6 +8,7 @@ import { Busy, Confirm, ResultNotice, Slider, StatusChip, Toggle, errorText } fr
 import { prepareWallpaper, thumbnail } from '../lib/image'
 import { fetchBingDaily } from '../lib/backgrounds'
 import { checkWeather, findPlaces, type Place } from '../lib/places'
+import { checkNews, type Headline } from '../lib/news'
 
 type Tab = 'overview' | 'apps' | 'layout' | 'place' | 'look' | 'widgets' | 'music' | 'buttons'
 
@@ -416,8 +417,8 @@ const LAYOUTS: { id: HomeLayout; label: string; hint: string; mini: [number, num
   { id: 'free', label: 'Только свободная область', hint: 'Без дока, рядов и списка: на экране только иконки, расставленные вами.', mini: [[12, 14, 22, 20, false], [58, 10, 24, 20, false], [30, 52, 22, 22, false], [70, 60, 20, 18, false]] }
 ]
 
-const SECTION_LABEL: Record<HomeSection, string> = { nowplaying: 'Сейчас играет', dock: 'Док', rows: 'Ряды', folders: 'Папки', grid: 'Все приложения', free: 'Свободная область' }
-const ALL_SECTIONS: HomeSection[] = ['nowplaying', 'dock', 'rows', 'folders', 'free', 'grid']
+const SECTION_LABEL: Record<HomeSection, string> = { nowplaying: 'Сейчас играет', weather: 'Погода (виджет)', news: 'Новости', dock: 'Док', rows: 'Ряды', folders: 'Папки', grid: 'Все приложения', free: 'Свободная область' }
+const ALL_SECTIONS: HomeSection[] = ['nowplaying', 'weather', 'news', 'dock', 'rows', 'folders', 'free', 'grid']
 const ALL_QUICK: QuickId[] = ['inputs', 'wifi', 'bluetooth', 'display', 'apps', 'sleep', 'search', 'music', 'drawer', 'tune', 'settings']
 
 /** Turn items on and off and put the ones that are on in order. */
@@ -821,8 +822,8 @@ function WidgetsTab({ cfg, set }: { cfg: HomeConfig; set: SetFn }): ReactNode {
     setChecking(true)
     setCheck(null)
     try {
-      const t = await checkWeather(cfg.weather_lat, cfg.weather_lon)
-      setCheck({ ok: true, text: `Сервер погоды отвечает: сейчас в «${cfg.weather_place}» около ${t}°C. Значит, место выбрано верно. Если на телевизоре погоды нет, там написана причина (например, UnknownHostException — у ТВ нет доступа к интернету или DNS блокирует api.open-meteo.com).` })
+      const r = await checkWeather(cfg.weather_lat, cfg.weather_lon, cfg.weather_source)
+      setCheck({ ok: true, text: `${r.source} отвечает: сейчас в «${cfg.weather_place}» около ${r.temp}°. Значит, место выбрано верно. Если на телевизоре погоды нет, там написана причина по каждому источнику (например, UnknownHostException — у ТВ нет доступа к интернету или DNS блокирует адрес; «капча» — Яндекс не пустил телевизор).` })
     } catch (e) {
       setCheck({ ok: false, text: errorText(e) })
     } finally {
@@ -854,8 +855,14 @@ function WidgetsTab({ cfg, set }: { cfg: HomeConfig; set: SetFn }): ReactNode {
           Температура, сегодняшний максимум и минимум и состояние неба рядом с часами. Данные берутся из Open-Meteo: бесплатно и без регистрации.
           Телевизор запрашивает их каждые 30 минут.
         </p>
+        <Toggle
+          label="Большой виджет погоды над доком"
+          hint="Крупная карточка: температура, состояние неба, ощущается, ветер, влажность и прогноз на 4 дня. Нужен выбранный город. Строка рядом с часами тогда скрывается."
+          checked={cfg.sections.includes('weather')}
+          onChange={(on) => set({ sections: on ? withBefore(cfg.sections, 'weather', ['dock', 'rows', 'folders', 'grid']) : cfg.sections.filter((s) => s !== 'weather') })}
+        />
         {cfg.weather_place ? (
-          <div className="row" style={{ marginBottom: 14 }}>
+          <div className="row" style={{ margin: '14px 0' }}>
             <span>
               Показываю погоду: <b>{cfg.weather_place}</b>
             </span>
@@ -896,6 +903,15 @@ function WidgetsTab({ cfg, set }: { cfg: HomeConfig; set: SetFn }): ReactNode {
             ))}
           </ul>
         )}
+        <p className="small muted" style={{ marginBottom: 6 }}>Откуда брать погоду. Если выбранный источник не ответил, телевизор сам пробует второй.</p>
+        <div className="seg">
+          {([['yandex', 'Яндекс.Погода'], ['openmeteo', 'Open-Meteo']] as const).map(([id, label]) => (
+            <button key={id} className={cfg.weather_source === id ? 'on' : ''} onClick={() => set({ weather_source: id })}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <p className="small muted" style={{ margin: '10px 0 0' }}>Погода берётся для города, который вы нашли выше (по его координатам). Ссылка на Яндекс из вашего сообщения вела на Химки, а не на Екатеринбург, поэтому здесь найдите «Екатеринбург».</p>
         <div className="seg" style={{ marginTop: 14 }}>
           {([['c', '°C'], ['f', '°F']] as const).map(([id, label]) => (
             <button key={id} className={cfg.weather_unit === id ? 'on' : ''} onClick={() => set({ weather_unit: id })}>
@@ -904,7 +920,86 @@ function WidgetsTab({ cfg, set }: { cfg: HomeConfig; set: SetFn }): ReactNode {
           ))}
         </div>
       </div>
+
+      <NewsCard cfg={cfg} set={set} />
     </>
+  )
+}
+
+/** Puts a section just before the first of `before` that is on; at the end if none is. */
+function withBefore(sections: HomeConfig['sections'], id: HomeConfig['sections'][number], before: HomeConfig['sections']): HomeConfig['sections'] {
+  if (sections.includes(id)) return sections
+  const i = sections.findIndex((s) => before.includes(s))
+  return i < 0 ? [...sections, id] : [...sections.slice(0, i), id, ...sections.slice(i)]
+}
+
+function NewsCard({ cfg, set }: { cfg: HomeConfig; set: SetFn }): ReactNode {
+  const on = cfg.sections.includes('news')
+  const [url, setUrl] = useState(cfg.news_url)
+  const [checking, setChecking] = useState(false)
+  const [found, setFound] = useState<Headline[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  async function verify(): Promise<void> {
+    setChecking(true)
+    setFound(null)
+    setError(null)
+    try {
+      setFound(await checkNews(url.trim()))
+    } catch (e) {
+      setError(errorText(e))
+    } finally {
+      setChecking(false)
+    }
+  }
+
+  return (
+    <div className="card">
+      <h2>Новости</h2>
+      <p className="muted">
+        Карточка с последними заголовками. По OK на заголовке телевизор открывает статью в браузере, если он на ТВ есть. Для сайта Е1.ру заголовки берутся прямо со страницы;
+        для других сайтов укажите адрес RSS-ленты.
+      </p>
+      <Toggle
+        label="Показывать новости на главном экране"
+        hint="Карточка стоит над доком; порядок меняется во вкладке «Макет → Разделы»."
+        checked={on}
+        onChange={(v) => set({ sections: v ? withBefore(cfg.sections, 'news', ['dock', 'rows', 'folders', 'grid']) : cfg.sections.filter((s) => s !== 'news') })}
+      />
+      <label className="field" style={{ marginTop: 14 }}>
+        <span>Адрес страницы или RSS-ленты</span>
+        <input
+          type="text"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          onBlur={() => url.trim() !== cfg.news_url && set({ news_url: url.trim() })}
+          onKeyDown={(e) => e.key === 'Enter' && url.trim() !== cfg.news_url && set({ news_url: url.trim() })}
+          placeholder="https://www.e1.ru/"
+          style={{ width: 360 }}
+        />
+      </label>
+      <div className="grid-2" style={{ marginTop: 14 }}>
+        <Slider label="Заголовков" value={cfg.news_count} min={3} max={8} onChange={(v) => set({ news_count: v }, 250)} />
+        <Slider label="Обновлять раз в" value={cfg.news_refresh} min={10} max={120} step={5} unit=" мин" onChange={(v) => set({ news_refresh: v }, 250)} />
+      </div>
+      <div className="row" style={{ marginTop: 14 }}>
+        <button className="btn small" disabled={checking || !url.trim()} onClick={() => void verify()}>
+          Проверить новости
+        </button>
+        {checking && <Busy text="Проверяю" />}
+      </div>
+      {error && <div className="notice error" style={{ marginTop: 12, marginBottom: 0 }}>{error}</div>}
+      {found && (
+        <div className="notice ok" style={{ marginTop: 12, marginBottom: 0 }}>
+          Нашлось заголовков: {found.length}. Первые:
+          <ul>
+            {found.slice(0, 3).map((h) => (
+              <li key={h.url}>{h.title}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
   )
 }
 

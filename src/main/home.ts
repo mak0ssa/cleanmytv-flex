@@ -20,8 +20,8 @@ export const DEFAULTS: HomeConfig = {
   rows: [], folders: [], dock_scale: 100, tile_scale: 100, buttons_on: false, buttons: [],
   accent: '#4CAF50', focus: 'glow', background: '#1C2A1F', wallpaper_dim: 35,
   order: [], hidden: [], free: [], free_height: 45, free_scale: 100,
-  drawer_on: false, drawer_pill: true, drawer_style: 'sheet', drawer_columns: 6, drawer_autoclose: 0, drawer_dim: 60, language: 'ru', clock_scale: 100, anim_style: 'zoom', anim_speed: 100, dock_size: 5, columns: 6, show_names: true, clock: 'time_date', greeting: '',
-  weather_place: '', weather_lat: 0, weather_lon: 0, weather_unit: 'c',
+  drawer_on: false, drawer_pill: true, drawer_style: 'sheet', drawer_columns: 6, drawer_autoclose: 0, drawer_dim: 60, language: 'ru', clock_scale: 100, anim_style: 'zoom', anim_speed: 100, news_url: 'https://www.e1.ru/', news_count: 5, news_refresh: 30, dock_size: 5, columns: 6, show_names: true, clock: 'time_date', greeting: '',
+  weather_place: '', weather_lat: 0, weather_lon: 0, weather_unit: 'c', weather_source: 'yandex',
   visualiser: true, viz_style: 'bars', viz_bars: 32, viz_height: 12, viz_opacity: 85, viz_colour: 'accent', viz_peaks: true, viz_sensitivity: 100
 }
 
@@ -33,12 +33,13 @@ const CHOICES = {
   viz_style: ['bars', 'mirror', 'wave'],
   viz_colour: ['accent', 'rainbow', 'white'],
   weather_unit: ['c', 'f'],
+  weather_source: ['yandex', 'openmeteo'],
   drawer_style: ['sheet', 'side', 'full'],
   language: ['ru', 'en', 'auto']
 } as const
 
 const LISTS = {
-  sections: ['nowplaying', 'dock', 'rows', 'folders', 'grid', 'free'],
+  sections: ['nowplaying', 'weather', 'news', 'dock', 'rows', 'folders', 'grid', 'free'],
   quick: ['settings', 'wifi', 'inputs', 'bluetooth', 'display', 'apps', 'sleep', 'search', 'music', 'drawer', 'tune']
 } as const
 
@@ -51,7 +52,7 @@ const RANGES = {
   top_space: [0, 40], dock_scale: [60, 150], tile_scale: [60, 150],
   wallpaper_dim: [0, 80], dock_size: [0, 8], columns: [3, 8],
   viz_bars: [8, 64], viz_height: [4, 40], viz_opacity: [20, 100], viz_sensitivity: [25, 300],
-  free_height: [20, 80], free_scale: [60, 200], drawer_columns: [3, 8], drawer_autoclose: [0, 120], drawer_dim: [0, 95], clock_scale: [70, 180], anim_speed: [50, 200]
+  free_height: [20, 80], free_scale: [60, 200], drawer_columns: [3, 8], drawer_autoclose: [0, 120], drawer_dim: [0, 95], clock_scale: [70, 180], anim_speed: [50, 200], news_count: [3, 8], news_refresh: [10, 120]
 } as const
 
 const BOOLS = ['show_names', 'visualiser', 'viz_peaks', 'buttons_on', 'drawer_on', 'drawer_pill'] as const
@@ -212,6 +213,11 @@ export function clean(o: Record<string, unknown>, lenient = false): Partial<Home
   if (o.greeting !== undefined) {
     if (typeof o.greeting === 'string') out.greeting = plain(o.greeting, 40)
     else bad('greeting must be text')
+  }
+  if (o.news_url !== undefined) {
+    const u = typeof o.news_url === 'string' ? o.news_url.trim() : null
+    if (u !== null && (u === '' || (/^https:\/\/[^\s]+$/.test(u) && u.length <= 200))) out.news_url = u
+    else bad('news_url must be an https address with no spaces, or empty')
   }
   if (o.weather_place !== undefined) {
     if (typeof o.weather_place === 'string') out.weather_place = plain(o.weather_place, 40)

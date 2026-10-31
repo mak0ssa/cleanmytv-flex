@@ -112,6 +112,33 @@ function Sections({ apps, cfg, width, dockW, showFolders = true }: { apps: TvApp
               ))}
             </div>
           )
+        if (s === 'weather' && cfg.weather_place)
+          return (
+            <div key={s} style={{ display: 'flex', alignItems: 'center', gap: 22, padding: '18px 28px', margin: '6px 0', borderRadius: 20, background: 'rgba(28,42,31,0.6)', width }}>
+              <span style={{ fontSize: 56 }}>☁</span>
+              <div>
+                <div style={{ fontSize: 56, fontWeight: 300, lineHeight: 1 }}>14°</div>
+                <div style={{ fontSize: 16 }}>Переменная облачность</div>
+                <div style={{ fontSize: 13, color: '#D7CFC4' }}>{cfg.weather_place}</div>
+              </div>
+              <div style={{ fontSize: 14, color: '#D7CFC4', lineHeight: 1.6 }}>Ощущается 12°<br />Ветер 3 м/с<br />Влажность 71%</div>
+              <div style={{ flex: 1 }} />
+              {['Пт', 'Сб', 'Вс', 'Пн'].map((d) => (
+                <div key={d} style={{ textAlign: 'center', fontSize: 13, color: '#D7CFC4', paddingLeft: 12 }}>
+                  {d}<div style={{ fontSize: 22 }}>☁</div><div style={{ color: '#F0EBE5', fontSize: 15 }}>13°</div>8°
+                </div>
+              ))}
+            </div>
+          )
+        if (s === 'news' && cfg.news_url)
+          return (
+            <div key={s} style={{ padding: '14px 20px', margin: '6px 0', borderRadius: 20, background: 'rgba(28,42,31,0.6)', width }}>
+              <div style={{ fontSize: 12, color: '#D7CFC4', marginBottom: 6 }}>Новости · {cfg.news_url.replace(/^https:\/\/(www\.)?/, '').replace(/\/.*$/, '')}</div>
+              {['Заголовок первой новости с сайта', 'Заголовок второй новости с сайта', 'Заголовок третьей новости с сайта'].slice(0, Math.min(3, cfg.news_count)).map((t) => (
+                <div key={t} style={{ fontSize: 15, padding: '6px 10px' }}>{t}</div>
+              ))}
+            </div>
+          )
         if (s === 'dock' && m.dock.length)
           return (
             <div key={s} style={{ display: 'flex', gap: GAP, padding: '8px 0' }}>

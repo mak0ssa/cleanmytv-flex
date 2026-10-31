@@ -50,6 +50,10 @@ data class HomeConfig(
     val drawerAutoclose: Int = 0, // seconds without a button press before it closes; 0 = never
     val drawerDim: Int = 60, // percent of shade over the home screen behind it
     // Animations: how an icon answers focus (zoom, lift, bounce, none) and how fast; layouts cross-fade unless "none".
+    // News widget: headlines from a web page (the e1.ru pattern) or an RSS/Atom feed; shown when "news" is a section.
+    val newsUrl: String = "https://www.e1.ru/",
+    val newsCount: Int = 5,
+    val newsRefresh: Int = 30, // minutes
     val animStyle: String = "zoom",
     val animSpeed: Int = 100, // percent, 50 slow to 200 fast
     val clockScale: Int = 100, // percent, size of the clock and date
@@ -64,6 +68,7 @@ data class HomeConfig(
     val weatherLat: Double = 0.0,
     val weatherLon: Double = 0.0,
     val weatherUnit: String = "c", // c, f
+    val weatherSource: String = "yandex", // yandex (Yandex.Pogoda page), openmeteo; the other is the fallback
     // Music bars
     val visualiser: Boolean = true,
     val vizStyle: String = "bars", // bars, mirror, wave
@@ -103,6 +108,9 @@ data class HomeConfig(
         .put("language", language)
         .put("clock_scale", clockScale)
         .put("anim_style", animStyle)
+        .put("news_url", newsUrl)
+        .put("news_count", newsCount)
+        .put("news_refresh", newsRefresh)
         .put("anim_speed", animSpeed)
         .put("dock_size", dockSize)
         .put("columns", columns)
@@ -113,6 +121,7 @@ data class HomeConfig(
         .put("weather_lat", weatherLat)
         .put("weather_lon", weatherLon)
         .put("weather_unit", weatherUnit)
+        .put("weather_source", weatherSource)
         .put("visualiser", visualiser)
         .put("viz_style", vizStyle)
         .put("viz_bars", vizBars)
@@ -128,7 +137,7 @@ data class HomeConfig(
 
         private fun hex(c: Long) = "#%06X".format(c and 0xFFFFFF)
         val QUICK = setOf("settings", "wifi", "inputs", "bluetooth", "display", "apps", "sleep", "search", "music", "drawer", "tune")
-        private val SECTIONS = setOf("nowplaying", "dock", "rows", "folders", "grid", "free")
+        private val SECTIONS = setOf("nowplaying", "weather", "news", "dock", "rows", "folders", "grid", "free")
         val BUTTON_ACTIONS = QUICK - "inputs" + setOf("inputs", "home", "back", "none", "app")
 
         private fun groupsJson(gs: List<Group>) = JSONArray(gs.map { JSONObject().put("name", it.name).put("apps", JSONArray(it.apps)) })
@@ -201,6 +210,9 @@ data class HomeConfig(
                 drawerAutoclose = int("drawer_autoclose", base.drawerAutoclose, 0, 120),
                 drawerDim = int("drawer_dim", base.drawerDim, 0, 95),
                 clockScale = int("clock_scale", base.clockScale, 70, 180),
+                newsUrl = if (o.has("news_url")) o.optString("news_url").trim().let { u -> if (u.isEmpty() || (u.startsWith("https://") && u.length <= 200 && u.none { it.isISOControl() || it == ' ' })) u else base.newsUrl } else base.newsUrl,
+                newsCount = int("news_count", base.newsCount, 3, 8),
+                newsRefresh = int("news_refresh", base.newsRefresh, 10, 120),
                 animStyle = choice("anim_style", base.animStyle, setOf("zoom", "lift", "bounce", "none")),
                 animSpeed = int("anim_speed", base.animSpeed, 50, 200),
                 language = choice("language", base.language, setOf("ru", "en", "auto")),
@@ -213,6 +225,7 @@ data class HomeConfig(
                 weatherLat = real("weather_lat", base.weatherLat, 90.0),
                 weatherLon = real("weather_lon", base.weatherLon, 180.0),
                 weatherUnit = choice("weather_unit", base.weatherUnit, setOf("c", "f")),
+                weatherSource = choice("weather_source", base.weatherSource, setOf("yandex", "openmeteo")),
                 visualiser = bool("visualiser", base.visualiser),
                 vizStyle = choice("viz_style", base.vizStyle, setOf("bars", "mirror", "wave")),
                 vizBars = int("viz_bars", base.vizBars, 8, 64),

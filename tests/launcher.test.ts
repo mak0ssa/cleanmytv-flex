@@ -149,6 +149,19 @@ describe('CleanMyTV Home', () => {
     expect(quick.quick).toEqual(['tune', 'drawer'])
   })
 
+  it('keeps the weather source to the two known ones', async () => {
+    expect((await H.setConfig({ weather_source: 'openmeteo' })).weather_source).toBe('openmeteo')
+    await expect(H.setConfig({ weather_source: 'gismeteo' as never })).rejects.toThrow(/weather_source/)
+  })
+
+  it('sends the weather and news widgets, and refuses a news address that is not https', async () => {
+    const cfg = await H.setConfig({ sections: ['weather', 'news', 'dock', 'grid'], news_url: ' https://www.e1.ru/ ', news_count: 99, news_refresh: 1 })
+    expect(cfg).toMatchObject({ sections: ['weather', 'news', 'dock', 'grid'], news_url: 'https://www.e1.ru/', news_count: 8, news_refresh: 10 })
+    expect((await H.setConfig({ news_url: '' })).news_url).toBe('')
+    await expect(H.setConfig({ news_url: 'http://www.e1.ru/' })).rejects.toThrow(/news_url/)
+    await expect(H.setConfig({ news_url: 'https://a b.ru/' })).rejects.toThrow(/news_url/)
+  })
+
   it("lists the launcher's own apps and drops malformed entries", async () => {
     expect((await H.apps()).map((a) => a.pkg)).toEqual(['com.netflix.ninja', 'com.google.android.youtube.tv'])
   })

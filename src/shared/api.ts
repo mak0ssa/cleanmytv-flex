@@ -144,7 +144,7 @@ export type HomeLayout = 'shelf' | 'split' | 'rail' | 'mirror' | 'center' | 'bot
 
 /** How an icon answers focus on the TV. */
 export type AnimStyle = 'zoom' | 'lift' | 'bounce' | 'none'
-export type HomeSection = 'nowplaying' | 'dock' | 'rows' | 'folders' | 'grid' | 'free'
+export type HomeSection = 'nowplaying' | 'weather' | 'news' | 'dock' | 'rows' | 'folders' | 'grid' | 'free'
 export type QuickId = 'settings' | 'wifi' | 'inputs' | 'bluetooth' | 'display' | 'apps' | 'sleep' | 'search' | 'music' | 'drawer' | 'tune'
 
 /** What a mapped remote button does: a quick-settings action, Home, Back, nothing, or open an app. */
@@ -238,6 +238,13 @@ export interface HomeConfig {
   anim_style: AnimStyle
   /** Speed of those animations, percent, 50 to 200. */
   anim_speed: number
+  // News widget (the 'news' section)
+  /** A web page (the e1.ru article pattern) or an RSS/Atom feed, https only; empty turns the widget off. */
+  news_url: string
+  /** Headlines shown, 3 to 8. */
+  news_count: number
+  /** Minutes between refreshes, 10 to 120. */
+  news_refresh: number
   /** The first visible apps in `order` that sit in the dock, 0 to 8. */
   dock_size: number
   /** Apps per row in the grid, 3 to 8. */
@@ -251,6 +258,8 @@ export interface HomeConfig {
   weather_lat: number
   weather_lon: number
   weather_unit: 'c' | 'f'
+  /** Where the TV reads the weather from; the other is the fallback. */
+  weather_source: 'yandex' | 'openmeteo'
   // Music bars
   visualiser: boolean
   viz_style: 'bars' | 'mirror' | 'wave'

@@ -1,6 +1,8 @@
 package io.github.wingedpanther.cleanmytv.home
 
+import android.content.Intent
 import android.graphics.BitmapFactory
+import android.net.Uri
 import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.Crossfade
@@ -193,6 +195,23 @@ fun HomeScreen(visualiser: Visualiser, appsVersion: Int, open: androidx.compose.
         }
     }
 
+    var news by remember { mutableStateOf<List<Headline>>(emptyList()) }
+    var newsNote by remember { mutableStateOf<String?>(null) }
+    val newsOn = "news" in cfg.sections
+    LaunchedEffect(newsOn, cfg.newsUrl, cfg.newsCount, cfg.newsRefresh) {
+        news = emptyList()
+        newsNote = null
+        if (!newsOn || cfg.newsUrl.isBlank()) return@LaunchedEffect
+        newsNote = if (Words.ru(cfg)) "Загружаю новости…" else "Loading the news…"
+        // A failed refresh keeps the last headlines; the next try is after the refresh time, or 2 minutes if there are none yet.
+        while (true) {
+            val r = News.fetch(cfg)
+            if (r.items.isNotEmpty()) { news = r.items; newsNote = null }
+            else if (news.isEmpty()) newsNote = (if (Words.ru(cfg)) "Нет новостей" else "No news") + (r.error?.let { " ($it)" } ?: "")
+            delay(if (news.isEmpty()) 2 * 60_000L else cfg.newsRefresh * 60_000L)
+        }
+    }
+
     val home = Home(apps, cfg)
     val accent = Color(cfg.accent)
     // Quick-settings icons this TV can actually open; Inputs only on TVs that have inputs.
@@ -221,7 +240,7 @@ fun HomeScreen(visualiser: Visualiser, appsVersion: Int, open: androidx.compose.
         // While editing, focus goes to the icon just added or last touched.
     val focusKey = if (edit.on) (edit.selected ?: edit.grabbed)?.let { "free:$it" } ?: home.first else home.first
     LaunchedEffect(home.first, cfg.layout, edit.on, edit.grabbed) { if (focusKey != null) runCatching { first.requestFocus() } }
-    val ui = Ui(cfg, accent, first, focusKey, onFolder = { openFolder = it }, track = track, weather = weather, edit = edit, weatherNote = weatherNote)
+    val ui = Ui(cfg, accent, first, focusKey, onFolder = { openFolder = it }, track = track, weather = weather, edit = edit, weatherNote = weatherNote, news = news, newsNote = newsNote)
     BackHandler(enabled = edit.on) { if (edit.grabbed != null) edit.grabbed = null else edit.on = false }
 
     /** Makes sure the free area is among the sections, puts the app on it, and picks it up for moving. */
@@ -291,6 +310,9 @@ private class Ui(
     val onPick: ((TvApp) -> Unit)? = null,
     /** What to show in place of the weather while there is none: loading, or why it failed. */
     val weatherNote: String? = null,
+    /** Headlines for the news widget, or why there are none. */
+    val news: List<Headline> = emptyList(),
+    val newsNote: String? = null,
 ) {
     fun focusFor(section: String, app: TvApp): Modifier = if ("$section:${app.pkg}" == focusKey) Modifier.focusRequester(focus) else Modifier
 }
@@ -459,6 +481,8 @@ private fun Sections(home: Home, ui: Ui, modifier: Modifier, padding: PaddingVal
         LazyColumn(Modifier.fillMaxSize().fadeTop(), contentPadding = padding) {
             for (s in cfg.sections) when (s) {
                 "nowplaying" -> ui.track?.let { t -> item("nowplaying") { NowPlayingCard(t, ui) } }
+                "weather" -> if (cfg.weatherPlace.isNotBlank()) item("weather") { WeatherWidget(ui) }
+                "news" -> if (cfg.newsUrl.isNotBlank()) item("news") { NewsWidget(ui) }
                 "dock" -> if (home.dock.isNotEmpty()) item("dock") {
                     TileRow("dock", home.dock, ui, dockW, big = true)
                 }
@@ -626,6 +650,7 @@ private fun NowPlayingCard(t: Track, ui: Ui) {
 /** Icon, temperature, today's high and low, and the place, in one muted line. */
 @Composable
 private fun WeatherLine(ui: Ui, size: androidx.compose.ui.unit.TextUnit, modifier: Modifier = Modifier) {
+    if ("weather" in ui.cfg.sections) return
     val w = ui.weather
     if (w == null) {
         ui.weatherNote?.let { Text(it, color = MUTED, fontSize = size, fontFamily = CLOCK, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = modifier) }
@@ -638,10 +663,95 @@ private fun WeatherLine(ui: Ui, size: androidx.compose.ui.unit.TextUnit, modifie
     }
 }
 
+/** What the sky is doing, in words, for a WMO weather code. */
+private fun weatherText(code: Int, ru: Boolean): String = when (code) {
+    0 -> if (ru) "Ясно" else "Clear"
+    1 -> if (ru) "Преимущественно ясно" else "Mostly clear"
+    2 -> if (ru) "Переменная облачность" else "Partly cloudy"
+    3 -> if (ru) "Пасмурно" else "Overcast"
+    45, 48 -> if (ru) "Туман" else "Fog"
+    in 51..57 -> if (ru) "Морось" else "Drizzle"
+    in 61..67 -> if (ru) "Дождь" else "Rain"
+    in 71..77 -> if (ru) "Снег" else "Snow"
+    in 80..82 -> if (ru) "Ливень" else "Showers"
+    85, 86 -> if (ru) "Снегопад" else "Snow showers"
+    in 95..99 -> if (ru) "Гроза" else "Thunderstorm"
+    else -> if (ru) "Облачно" else "Cloudy"
+}
+
+/** A big weather card above the dock: the temperature, the sky in words, feels-like, wind, humidity and four more days. */
+@Composable
+private fun WeatherWidget(ui: Ui) {
+    val cfg = ui.cfg
+    val ru = Words.ru(cfg)
+    val w = ui.weather
+    Box(Modifier.fillMaxWidth().padding(horizontal = BLEED, vertical = 12.dp).background(scrim(0.55f), RoundedCornerShape(20.dp)).padding(horizontal = 28.dp, vertical = 22.dp)) {
+        if (w == null) {
+            Text(ui.weatherNote ?: (if (ru) "Погода: выберите город в программе на компьютере" else "Weather: choose a place in the desktop app"), color = MUTED, fontSize = 18.sp)
+            return@Box
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Image(weatherIcon(w), null, Modifier.size(92.dp), colorFilter = ColorFilter.tint(TEXT))
+            Spacer(Modifier.width(18.dp))
+            Column {
+                Text("${w.temp}°", color = TEXT, fontSize = 60.sp, fontFamily = CLOCK, fontWeight = FontWeight.Light, maxLines = 1)
+                Text(weatherText(w.code, ru), color = TEXT, fontSize = 18.sp, maxLines = 1)
+                Text(cfg.weatherPlace + (if (w.source.isNotEmpty()) " · ${w.source}" else ""), color = MUTED, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Spacer(Modifier.width(30.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text((if (ru) "Ощущается " else "Feels like ") + "${w.feels}°", color = MUTED, fontSize = 15.sp, maxLines = 1)
+                Text((if (ru) "Ветер " else "Wind ") + "${w.wind} " + (if (ru) "м/с" else "m/s"), color = MUTED, fontSize = 15.sp, maxLines = 1)
+                Text((if (ru) "Влажность " else "Humidity ") + "${w.humidity}%", color = MUTED, fontSize = 15.sp, maxLines = 1)
+                Text("↑ ${w.high}°  ↓ ${w.low}°", color = MUTED, fontSize = 15.sp, maxLines = 1)
+            }
+            Spacer(Modifier.weight(1f))
+            w.days.drop(1).take(4).forEach { d ->
+                Column(Modifier.padding(start = 20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(d.dow, color = MUTED, fontSize = 13.sp, maxLines = 1)
+                    if (d.code >= 0) Image(weatherIcon(d.code, true), null, Modifier.size(30.dp), colorFilter = ColorFilter.tint(TEXT)) else Spacer(Modifier.height(8.dp))
+                    Text("${d.high}°", color = TEXT, fontSize = 16.sp, maxLines = 1)
+                    Text("${d.low}°", color = MUTED, fontSize = 13.sp, maxLines = 1)
+                }
+            }
+        }
+    }
+}
+
+/** Headlines in a card; OK on one opens the article in the TV's browser, if it has one. */
+@Composable
+private fun NewsWidget(ui: Ui) {
+    val cfg = ui.cfg
+    val ctx = LocalContext.current
+    val ru = Words.ru(cfg)
+    val host = remember(cfg.newsUrl) { runCatching { java.net.URL(cfg.newsUrl).host.removePrefix("www.") }.getOrDefault("") }
+    Column(Modifier.fillMaxWidth().padding(horizontal = BLEED, vertical = 12.dp).background(scrim(0.55f), RoundedCornerShape(20.dp)).padding(horizontal = 20.dp, vertical = 16.dp).focusGroup()) {
+        Text((if (ru) "Новости · " else "News · ") + host, color = MUTED, fontSize = 13.sp, modifier = Modifier.padding(start = 8.dp, bottom = 6.dp))
+        if (ui.news.isEmpty()) {
+            Text(ui.newsNote ?: "", color = MUTED, fontSize = 16.sp, modifier = Modifier.padding(start = 8.dp, top = 4.dp, bottom = 4.dp))
+        }
+        for (h in ui.news.take(cfg.newsCount)) {
+            val shape = RoundedCornerShape(10.dp)
+            Surface(
+                onClick = { runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(h.url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }.onFailure { Log.w(TAG, "open ${h.url}: $it") } },
+                modifier = Modifier.fillMaxWidth(),
+                shape = ClickableSurfaceDefaults.shape(shape),
+                scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),
+                border = ClickableSurfaceDefaults.border(focusedBorder = if (cfg.focus == "none") Border.None else Border(BorderStroke(2.dp, ui.accent), shape = shape)),
+                colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = TILE_FOCUSED),
+            ) {
+                Text(h.title, color = TEXT, fontSize = 17.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp))
+            }
+        }
+    }
+}
+
 /** WMO weather codes, as Open-Meteo reports them, to a drawn icon. */
-private fun weatherIcon(w: WeatherNow): ImageVector = when (w.code) {
-    0 -> if (w.day) Icons.Outlined.WbSunny else Icons.Outlined.NightsStay
-    1, 2 -> if (w.day) Icons.Outlined.WbCloudy else Icons.Outlined.NightsStay
+private fun weatherIcon(w: WeatherNow): ImageVector = weatherIcon(w.code, w.day)
+
+private fun weatherIcon(code: Int, day: Boolean): ImageVector = when (code) {
+    0 -> if (day) Icons.Outlined.WbSunny else Icons.Outlined.NightsStay
+    1, 2 -> if (day) Icons.Outlined.WbCloudy else Icons.Outlined.NightsStay
     3 -> Icons.Outlined.Cloud
     45, 48 -> Icons.Outlined.Dehaze
     in 71..77, 85, 86 -> Icons.Outlined.AcUnit

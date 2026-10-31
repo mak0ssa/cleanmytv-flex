@@ -59,8 +59,8 @@ export function installMock(): void {
     rows: [{ name: 'Watch', apps: ['com.netflix.ninja', 'com.google.android.youtube.tv'] }], folders: [], dock_scale: 100, tile_scale: 100, buttons_on: false, buttons: [],
     accent: '#4CAF50', focus: 'glow', background: '#1C2A1F', wallpaper_dim: 35,
     order: [], hidden: [], free: [], free_height: 45, free_scale: 100,
-    drawer_on: false, drawer_pill: true, drawer_style: 'sheet', drawer_columns: 6, drawer_autoclose: 0, drawer_dim: 60, language: 'ru', clock_scale: 100, anim_style: 'zoom', anim_speed: 100, dock_size: 5, columns: 6, show_names: true, clock: 'time_date', greeting: '',
-    weather_place: 'Dublin', weather_lat: 53.3331, weather_lon: -6.2489, weather_unit: 'c',
+    drawer_on: false, drawer_pill: true, drawer_style: 'sheet', drawer_columns: 6, drawer_autoclose: 0, drawer_dim: 60, language: 'ru', clock_scale: 100, anim_style: 'zoom', anim_speed: 100, news_url: 'https://www.e1.ru/', news_count: 5, news_refresh: 30, dock_size: 5, columns: 6, show_names: true, clock: 'time_date', greeting: '',
+    weather_place: 'Dublin', weather_lat: 53.3331, weather_lon: -6.2489, weather_unit: 'c', weather_source: 'yandex',
     visualiser: true, viz_style: 'bars', viz_bars: 32, viz_height: 12, viz_opacity: 85, viz_colour: 'accent', viz_peaks: true, viz_sensitivity: 100,
     has_wallpaper: false
   }
@@ -323,6 +323,8 @@ export function installMock(): void {
       return gradientUrl('#101820', '#0b2a3a', '#000000')
     },
     async webGet(url) {
+      if (url.startsWith('https://www.e1.ru/')) return { status: 200, contentType: 'text/html', base64: btoa('<a href="https://www.e1.ru/text/incidents/2026/10/30/1/">Пример заголовка новости для проверки виджета</a>') }
+      if (url.startsWith('https://yandex.ru/')) return { status: 200, contentType: 'text/html', base64: btoa('<p>Екатеринбург, погода сейчас: Ясно. Температура воздуха +5°, ощущается как +1°. Скорость ветра 3 м/с, восточный. Давление 755 мм рт. ст.. Влажность 75%.</p>') }
       if (url.startsWith('https://api.open-meteo.com/')) return { status: 200, contentType: 'application/json', base64: btoa(JSON.stringify({ current: { temperature_2m: 14.2 } })) }
       if (!url.startsWith('https://geocoding-api.open-meteo.com/')) throw new Error('Background sources need the desktop app.')
       const results = [{ name: 'Dublin', admin1: 'Leinster', country: 'Ireland', latitude: 53.3331, longitude: -6.2489 }, { name: 'Dublin', admin1: 'Ohio', country: 'United States', latitude: 40.0992, longitude: -83.1141 }]
